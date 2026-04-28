@@ -19,8 +19,15 @@ npm test -- <file>   # run a single test file
 
 ## Git & Version Control Rules
 
-- Commit after completing any meaningful unit of work (feature, fix, or structural change)
-- Use clear, professional commit messages in this format:
+**Commit and push regularly throughout work — not just at the end of a task.** Every meaningful unit of progress must be saved to GitHub so work is never lost and can always be reverted to a known-good state.
+
+Commit after each of these:
+- A new file or service is created
+- A feature or sub-feature is complete
+- A bug is fixed
+- Any structural or config change is made
+
+Use clear, professional commit messages in this format:
 
   `<type>: <short description>`
 
@@ -31,7 +38,8 @@ npm test -- <file>   # run a single test file
   - `refactor: clean up recommendation service structure`
   - `chore: update environment variables and config`
 
-- Push to GitHub after each commit
+Hard rules:
+- Push to GitHub immediately after every commit
 - Do NOT bundle unrelated changes into one commit
 - Do NOT leave uncommitted changes at the end of a task
 - Always ensure the app builds successfully before committing
