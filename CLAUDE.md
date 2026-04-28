@@ -19,4 +19,8 @@ npm test -- <file> # run a single test file
 
 ## Git & GitHub
 
-All changes must be committed with clean, descriptive messages and pushed to the remote on GitHub (https://github.com/davale365/ClaudeNextWatch). The main branch is `main`.
+All changes must be committed with clean, descriptive messages and pushed to GitHub (https://github.com/davale365/ClaudeNextWatch) regularly throughout work — not just at the end. Commit after each meaningful unit of work (new feature, bug fix, refactor, config change) so progress is never lost and the history is easy to follow. The main branch is `main`.
+
+- Commit early and often — don't batch unrelated changes into one commit
+- Each commit message should describe *what changed and why* in a concise subject line
+- Always push after committing so the remote stays in sync
