@@ -68,7 +68,8 @@ export async function searchTitles(query: string): Promise<TMDbTitle[]> {
 
   const data = await res.json()
 
-  return (data.results as any[])
+  type RawResult = { media_type: string; [key: string]: unknown }
+  return (data.results as RawResult[])
     .filter((item) => item.media_type === 'movie' || item.media_type === 'tv')
     .slice(0, 20)
     .map(mapResult)

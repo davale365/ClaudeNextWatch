@@ -1,65 +1,350 @@
-import Image from "next/image";
+'use client'
 
-export default function Home() {
+import { useState, useEffect, useCallback } from 'react'
+import { Input } from '@/components/ui/input'
+import { Button } from '@/components/ui/button'
+import TitleCard from '@/components/TitleCard'
+import WatchEntry from '@/components/WatchEntry'
+import { saveWatchHistory } from '@/services/interactions'
+import type { TMDbTitle } from '@/services/tmdb'
+import type { WatchInteraction } from '@/services/interactions'
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const PLATFORMS = [
+  'Netflix', 'Disney+', 'Amazon Prime Video', 'Apple TV+',
+  'Max', 'Hulu', 'Peacock', 'Paramount+',
+  'BBC iPlayer', 'MUBI', 'Shudder', 'BritBox',
+]
+
+const MIN_TITLES = 3
+const MAX_TITLES = 5
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type Step = 'landing' | 'platforms' | 'watches' | 'done'
+
+interface EntryState {
+  title: TMDbTitle
+  interaction: WatchInteraction | null
+}
+
+// ─── Progress indicator ───────────────────────────────────────────────────────
+
+const STEP_NUM: Record<Step, number> = { landing: 0, platforms: 1, watches: 2, done: 3 }
+
+function ProgressBar({ step }: { step: Step }) {
+  if (step === 'landing') return null
+  const current = STEP_NUM[step]
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <div className="flex items-center gap-2 py-5 justify-center">
+      {[1, 2, 3].map((n) => (
+        <div
+          key={n}
+          className={`h-1.5 rounded-full transition-all duration-300 ${
+            n <= current ? 'bg-blue-600 w-8' : 'bg-gray-200 w-4'
+          }`}
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
+      ))}
+    </div>
+  )
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
+export default function HomePage() {
+  const [step, setStep] = useState<Step>('landing')
+  const [platforms, setPlatforms] = useState<string[]>([])
+  const [entries, setEntries] = useState<EntryState[]>([])
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState<TMDbTitle[]>([])
+  const [searching, setSearching] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  // ─── Search ────────────────────────────────────────────────────────────────
+
+  const runSearch = useCallback(async (q: string) => {
+    if (!q.trim()) { setResults([]); return }
+    setSearching(true)
+    try {
+      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`)
+      const data = await res.json()
+      setResults(data.results ?? [])
+    } catch {
+      setResults([])
+    } finally {
+      setSearching(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (step !== 'watches') return
+    const t = setTimeout(() => runSearch(query), 400)
+    return () => clearTimeout(t)
+  }, [query, runSearch, step])
+
+
+  // ─── Platform handlers ──────────────────────────────────────────────────────
+
+  function togglePlatform(p: string) {
+    setPlatforms((prev) => (prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]))
+  }
+
+  // ─── Title handlers ─────────────────────────────────────────────────────────
+
+  function addTitle(title: TMDbTitle) {
+    if (entries.length >= MAX_TITLES) return
+    if (entries.some((e) => e.title.id === title.id && e.title.type === title.type)) return
+    setEntries((prev) => [...prev, { title, interaction: null }])
+    setQuery('')
+    setResults([])
+  }
+
+  function removeEntry(i: number) {
+    setEntries((prev) => prev.filter((_, idx) => idx !== i))
+  }
+
+  function setInteraction(i: number, interaction: WatchInteraction) {
+    setEntries((prev) => prev.map((e, idx) => (idx === i ? { ...e, interaction } : e)))
+  }
+
+  const isAdded = (t: TMDbTitle) =>
+    entries.some((e) => e.title.id === t.id && e.title.type === t.type)
+
+  // ─── Save ───────────────────────────────────────────────────────────────────
+
+  const missingInteractions = entries.filter((e) => e.interaction === null).length
+  const canSave = entries.length >= MIN_TITLES && missingInteractions === 0
+
+  async function handleSave() {
+    if (!canSave) return
+    setSaving(true)
+    setSaveError(null)
+    try {
+      await saveWatchHistory(
+        entries.map((e) => ({ title: e.title, interaction: e.interaction! }))
+      )
+      setStep('done')
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Something went wrong. Please try again.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // ─── Landing ─────────────────────────────────────────────────────────────────
+
+  if (step === 'landing') {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-6 bg-white">
+        <div className="max-w-sm w-full text-center space-y-8">
+          <div className="space-y-4">
+            <div className="text-6xl">🎬</div>
+            <h1 className="text-3xl font-bold tracking-tight">ClaudeNextWatch</h1>
+            <p className="text-gray-500 text-base leading-relaxed">
+              Tell us what you&apos;ve watched.<br />
+              Get 3 perfect recommendations.
+            </p>
+          </div>
+          <div className="space-y-3">
+            <Button size="lg" className="w-full text-base" onClick={() => setStep('platforms')}>
+              Get started
+            </Button>
+            <p className="text-xs text-gray-400">Takes about 2 minutes · No account needed</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // ─── Platforms ────────────────────────────────────────────────────────────────
+
+  if (step === 'platforms') {
+    return (
+      <div className="min-h-screen flex flex-col max-w-xl mx-auto w-full px-4">
+        <ProgressBar step={step} />
+
+        <div className="flex-1 space-y-6">
+          <div className="space-y-1">
+            <button
+              onClick={() => setStep('landing')}
+              className="text-sm text-gray-400 hover:text-gray-600 mb-3 block"
             >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
+              ← Back
+            </button>
+            <h2 className="text-xl font-bold">What are you subscribed to?</h2>
+            <p className="text-gray-500 text-sm">
+              We&apos;ll only suggest titles you can actually watch. Skip if you&apos;re not sure.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            {PLATFORMS.map((p) => (
+              <button
+                key={p}
+                onClick={() => togglePlatform(p)}
+                className={`px-4 py-3 rounded-xl border text-sm font-medium text-left transition-colors ${
+                  platforms.includes(p)
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'bg-white text-gray-700 border-gray-200 hover:border-blue-300 hover:text-blue-600'
+                }`}
+              >
+                {p}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="py-6">
+          <Button className="w-full" size="lg" onClick={() => { setQuery(''); setResults([]); setStep('watches') }}>
+            {platforms.length === 0
+              ? 'Skip'
+              : `Continue with ${platforms.length} platform${platforms.length !== 1 ? 's' : ''}`}
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
+  // ─── Watches ──────────────────────────────────────────────────────────────────
+
+  if (step === 'watches') {
+    return (
+      <div className="min-h-screen flex flex-col max-w-xl mx-auto w-full px-4">
+        <ProgressBar step={step} />
+
+        <div className="flex-1 space-y-5 pb-4">
+          <div className="space-y-1">
+            <button
+              onClick={() => setStep('platforms')}
+              className="text-sm text-gray-400 hover:text-gray-600 mb-3 block"
             >
-              Learning
-            </a>{" "}
-            center.
+              ← Back
+            </button>
+            <h2 className="text-xl font-bold">What have you watched recently?</h2>
+            <p className="text-gray-500 text-sm">
+              Add {MIN_TITLES}–{MAX_TITLES} titles and tell us how you felt about each.
+            </p>
+          </div>
+
+          {/* Added titles */}
+          {entries.length > 0 && (
+            <section className="space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-gray-700">Your recent watches</p>
+                <span className="text-xs text-gray-400 tabular-nums">
+                  {entries.length} / {MAX_TITLES}
+                </span>
+              </div>
+              <div className="space-y-2">
+                {entries.map((entry, i) => (
+                  <WatchEntry
+                    key={`${entry.title.type}-${entry.title.id}`}
+                    title={entry.title}
+                    interaction={entry.interaction}
+                    onChange={(interaction) => setInteraction(i, interaction)}
+                    onRemove={() => removeEntry(i)}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* Search */}
+          {entries.length < MAX_TITLES && (
+            <section className="space-y-3">
+              <Input
+                type="search"
+                placeholder="Search movies and TV shows…"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                autoFocus={entries.length === 0}
+              />
+
+              {searching && (
+                <p className="text-sm text-gray-400 animate-pulse">Searching…</p>
+              )}
+
+              {!searching && results.length > 0 && (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {results.slice(0, 6).map((title) => (
+                    <TitleCard
+                      key={`${title.type}-${title.id}`}
+                      title={title}
+                      selected={isAdded(title)}
+                      onToggle={addTitle}
+                      actionLabel="Add"
+                      selectedLabel="✓ Added"
+                    />
+                  ))}
+                </div>
+              )}
+
+              {!searching && query.trim() && results.length === 0 && (
+                <p className="text-sm text-gray-400">No results for &quot;{query}&quot;</p>
+              )}
+
+              {entries.length === 0 && !query && (
+                <div className="text-center py-10 text-gray-300 text-sm select-none">
+                  Search for a title above to get started
+                </div>
+              )}
+            </section>
+          )}
+        </div>
+
+        {/* Save */}
+        <div className="py-6 space-y-2 border-t">
+          {!canSave && entries.length > 0 && (
+            <p className="text-xs text-gray-400">
+              {entries.length < MIN_TITLES
+                ? `Add ${MIN_TITLES - entries.length} more title${MIN_TITLES - entries.length !== 1 ? 's' : ''} to continue`
+                : `Pick a reaction for ${missingInteractions} title${missingInteractions !== 1 ? 's' : ''} to continue`}
+            </p>
+          )}
+          <Button
+            className="w-full"
+            size="lg"
+            disabled={!canSave || saving}
+            onClick={handleSave}
+          >
+            {saving ? 'Saving…' : 'Save & continue'}
+          </Button>
+          {saveError && (
+            <p className="text-sm text-red-500">{saveError}</p>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // ─── Done ─────────────────────────────────────────────────────────────────────
+
+  return (
+    <div className="min-h-screen flex items-center justify-center px-6">
+      <div className="max-w-sm w-full text-center space-y-8">
+        <ProgressBar step="done" />
+        <div className="space-y-4">
+          <div className="text-6xl">✅</div>
+          <h2 className="text-2xl font-bold">You&apos;re all set!</h2>
+          <p className="text-gray-500 leading-relaxed">
+            Your watch history has been saved. Personalised recommendations are coming soon.
           </p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+        <Button
+          variant="outline"
+          className="w-full"
+          onClick={() => {
+            setStep('landing')
+            setEntries([])
+            setPlatforms([])
+            setSaveError(null)
+          }}
+        >
+          Start over
+        </Button>
+      </div>
     </div>
-  );
+  )
 }
