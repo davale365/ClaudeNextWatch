@@ -10,9 +10,17 @@ interface TitleCardProps {
   title: TMDbTitle
   selected: boolean
   onToggle: (title: TMDbTitle) => void
+  actionLabel?: string
+  selectedLabel?: string
 }
 
-export default function TitleCard({ title, selected, onToggle }: TitleCardProps) {
+export default function TitleCard({
+  title,
+  selected,
+  onToggle,
+  actionLabel = 'Select',
+  selectedLabel = '✓ Selected',
+}: TitleCardProps) {
   return (
     <Card
       className={`overflow-hidden transition-all ${
@@ -72,7 +80,7 @@ export default function TitleCard({ title, selected, onToggle }: TitleCardProps)
           className="w-full mt-1"
           onClick={() => onToggle(title)}
         >
-          {selected ? '✓ Selected' : 'Select'}
+          {selected ? selectedLabel : actionLabel}
         </Button>
       </CardContent>
     </Card>

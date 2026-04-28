@@ -1,7 +1,7 @@
 export type Json = string | number | boolean | null | { [key: string]: Json } | Json[]
 
 export type TitleType = 'movie' | 'tv'
-export type InteractionType = 'watched' | 'watchlist' | 'liked' | 'disliked'
+export type InteractionType = 'binged' | 'liked' | 'watched_normally' | 'dropped' | 'not_for_me'
 export type Mood = 'happy' | 'sad' | 'excited' | 'relaxed' | 'tense' | 'romantic'
 
 export interface Database {
@@ -10,7 +10,7 @@ export interface Database {
       users: {
         Row: {
           id: string
-          email: string
+          email: string | null
           display_name: string | null
           avatar_url: string | null
           created_at: string
@@ -18,18 +18,19 @@ export interface Database {
         }
         Insert: {
           id: string
-          email: string
+          email: string | null
           display_name?: string | null
           avatar_url?: string | null
           created_at?: string
           updated_at?: string
         }
         Update: {
-          email?: string
+          email?: string | null
           display_name?: string | null
           avatar_url?: string | null
           updated_at?: string
         }
+        Relationships: []
       }
       user_platforms: {
         Row: {
@@ -47,6 +48,7 @@ export interface Database {
         Update: {
           platform_name?: string
         }
+        Relationships: []
       }
       titles: {
         Row: {
@@ -87,6 +89,7 @@ export interface Database {
           platforms?: string[]
           updated_at?: string
         }
+        Relationships: []
       }
       user_title_interactions: {
         Row: {
@@ -112,6 +115,7 @@ export interface Database {
           rating?: number | null
           interacted_at?: string
         }
+        Relationships: []
       }
       recommendation_sessions: {
         Row: {
@@ -130,7 +134,12 @@ export interface Database {
           selected_platforms?: string[]
           created_at?: string
         }
-        Update: never
+        Update: {
+          mood?: Mood
+          available_time_minutes?: number
+          selected_platforms?: string[]
+        }
+        Relationships: []
       }
       recommendation_results: {
         Row: {
@@ -151,8 +160,15 @@ export interface Database {
           reasoning?: string | null
           created_at?: string
         }
-        Update: never
+        Update: {
+          rank?: number
+          confidence_score?: number
+          reasoning?: string | null
+        }
+        Relationships: []
       }
     }
+    Views: Record<string, never>
+    Functions: Record<string, never>
   }
 }
