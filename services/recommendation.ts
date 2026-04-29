@@ -392,10 +392,8 @@ export async function getRecommendations({
     buildPreferenceProfile(userInteractions)
   excludeIds.forEach((id) => watchedIds.add(id))
 
-  // Fall back to broad genres if the user has no positive watch history
   const fetchGenres = dominantGenres.length > 0 ? dominantGenres : ['Drama', 'Comedy', 'Action']
 
-  // Fetch up to 40 candidates: 20 movies + 20 TV shows in parallel
   const [movies, shows] = await Promise.all([
     fetchCandidatesByGenres(fetchGenres, 'movie'),
     fetchCandidatesByGenres(fetchGenres, 'tv'),
@@ -406,35 +404,51 @@ export async function getRecommendations({
     interaction,
   }))
 
-  // Build scored pool: exclude already-watched and fully-avoided titles
   interface ScoredTitle { tmdbTitle: TMDbTitle; candidate: Candidate; result: ScoreResult }
 
-  const pool: ScoredTitle[] = [...movies, ...shows]
-    .filter((t) => {
-      if (watchedIds.has(t.id)) return false
-      if (avoidedGenres.size > 0 && t.genres.length > 0) {
-        return !t.genres.every((g) => avoidedGenres.has(g))
-      }
-      return true
-    })
-    .map((tmdbTitle) => {
-      const candidate = tmdbToCandidate(tmdbTitle)
-      return {
-        tmdbTitle,
-        candidate,
-        result: getConfidenceScore({ candidate, userPreferences, mood, timeAvailable, selectedPlatforms }),
-      }
-    })
+  const QUALITY_FLOOR = 50
+
+  function isEligible(t: TMDbTitle): boolean {
+    if (watchedIds.has(t.id)) return false
+    if (avoidedGenres.size > 0 && t.genres.length > 0) {
+      return !t.genres.every((g) => avoidedGenres.has(g))
+    }
+    return true
+  }
+
+  function scoreTitle(tmdbTitle: TMDbTitle): ScoredTitle {
+    const candidate = tmdbToCandidate(tmdbTitle)
+    return {
+      tmdbTitle,
+      candidate,
+      result: getConfidenceScore({ candidate, userPreferences, mood, timeAvailable, selectedPlatforms }),
+    }
+  }
+
+  let pool: ScoredTitle[] = [...movies, ...shows]
+    .filter(isEligible)
+    .map(scoreTitle)
     .sort((a, b) => b.result.score - a.result.score)
 
+  // ── Expand pool if fewer than 3 candidates meet the quality floor ─────────
+  if (pool.filter((s) => s.result.score >= QUALITY_FLOOR).length < 3) {
+    const broadGenres = ['Drama', 'Comedy', 'Action', 'Thriller', 'Adventure', 'Science Fiction']
+    const poolIds = new Set(pool.map((s) => s.tmdbTitle.id))
+    const [moreMovies, moreShows] = await Promise.all([
+      fetchCandidatesByGenres(broadGenres, 'movie'),
+      fetchCandidatesByGenres(broadGenres, 'tv'),
+    ])
+    const additional = [...moreMovies, ...moreShows]
+      .filter((t) => !poolIds.has(t.id) && isEligible(t))
+      .map(scoreTitle)
+    pool = [...pool, ...additional].sort((a, b) => b.result.score - a.result.score)
+  }
+
   // ── Platform filtering ────────────────────────────────────────────────────
-  // When the user selected platforms, prefer titles known to be on them.
   const platformPool = selectedPlatforms.length > 0
     ? pool.filter((s) => s.candidate.platforms.some((p) => selectedPlatforms.includes(p)))
     : pool
 
-  // Try the predicate in platformPool first, then fall back to full pool.
-  // platformFallback = true means no platform match was found for this pick.
   function tryPick(
     pred: (s: ScoredTitle) => boolean,
     exclude: Set<number>
@@ -456,30 +470,34 @@ export async function getRecommendations({
 
   const usedIds = new Set<number>()
 
-  // ── Safe pick: highest score with strong genre alignment ──────────────────
+  // ── Safe: highest score, must meet floor ─────────────────────────────────
   const safePicked =
-    tryPick((s) => s.result.breakdown.tasteMatch >= 0.4, usedIds) ??
+    tryPick((s) => s.result.score >= QUALITY_FLOOR, usedIds) ??
     anyPick(usedIds) ??
     { item: pool[0], platformFallback: selectedPlatforms.length > 0 }
   if (safePicked.item) usedIds.add(safePicked.item.tmdbTitle.id)
 
-  // ── Stretch pick: good score but from a different genre cluster ───────────
+  const safeScore    = safePicked.item?.result.score ?? 0
+  const stretchFloor = Math.max(QUALITY_FLOOR, Math.round(safeScore * 0.7))
+  const hiddenFloor  = Math.max(QUALITY_FLOOR, Math.round(safeScore * 0.6))
+
+  // ── Stretch: >= 70% of safe score; prefer genre variety ──────────────────
   const stretchPicked =
-    tryPick((s) => s.result.breakdown.tasteMatch < 0.35 && s.result.score > 20, usedIds) ??
+    tryPick((s) => s.result.score >= stretchFloor && s.result.breakdown.tasteMatch < 0.5, usedIds) ??
+    tryPick((s) => s.result.score >= stretchFloor, usedIds) ??
     anyPick(usedIds) ??
     safePicked
-
   if (stretchPicked.item && stretchPicked.item.tmdbTitle.id !== safePicked.item?.tmdbTitle.id) {
     usedIds.add(stretchPicked.item.tmdbTitle.id)
   }
 
-  // ── Hidden gem: low vote_count but decent score ───────────────────────────
+  // ── Hidden gem: >= 60% of safe score; prefer lower popularity ────────────
   const hiddenPicked =
-    tryPick((s) => s.tmdbTitle.vote_count < 5000 && s.result.score > 15, usedIds) ??
+    tryPick((s) => s.result.score >= hiddenFloor && s.tmdbTitle.vote_count < 5000, usedIds) ??
+    tryPick((s) => s.result.score >= hiddenFloor, usedIds) ??
     anyPick(usedIds) ??
     stretchPicked
 
-  // Platforms to display: intersection of title platforms and selected platforms
   function displayPlatforms(candidate: Candidate): string[] {
     if (selectedPlatforms.length === 0) return []
     return candidate.platforms.filter((p) => selectedPlatforms.includes(p))
