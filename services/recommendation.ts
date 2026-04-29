@@ -307,6 +307,7 @@ export interface RecommendationInput {
   mood: Mood
   timeAvailable: number
   selectedPlatforms: string[]
+  excludeIds?: number[]   // additional tmdb_ids to exclude (e.g. already-seen recommendations)
 }
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
@@ -385,9 +386,11 @@ export async function getRecommendations({
   mood,
   timeAvailable,
   selectedPlatforms,
+  excludeIds = [],
 }: RecommendationInput): Promise<Recommendations> {
   const { dominantGenres, avoidedGenres, watchedIds } =
     buildPreferenceProfile(userInteractions)
+  excludeIds.forEach((id) => watchedIds.add(id))
 
   // Fall back to broad genres if the user has no positive watch history
   const fetchGenres = dominantGenres.length > 0 ? dominantGenres : ['Drama', 'Comedy', 'Action']

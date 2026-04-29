@@ -13,6 +13,7 @@ interface RecommendationCardProps {
   reason: string
   platforms: string[]
   platformFallback: boolean
+  onAlreadySeen: () => void
 }
 
 const PICK_CONFIG = {
@@ -32,7 +33,7 @@ const PICK_CONFIG = {
 
 type Reaction = 'interested' | 'not_for_me' | 'watchlist' | null
 
-export default function RecommendationCard({ pick, title, score, reason, platforms, platformFallback }: RecommendationCardProps) {
+export default function RecommendationCard({ pick, title, score, reason, platforms, platformFallback, onAlreadySeen }: RecommendationCardProps) {
   const [reaction, setReaction] = useState<Reaction>(null)
   const { label, bg } = PICK_CONFIG[pick]
   const year = title.release_year ?? '—'
@@ -127,6 +128,14 @@ export default function RecommendationCard({ pick, title, score, reason, platfor
           }`}
         >
           Not for me
+        </button>
+      </div>
+      <div className="border-t border-gray-100">
+        <button
+          onClick={onAlreadySeen}
+          className="w-full py-2.5 text-xs text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-colors"
+        >
+          Already seen — show me something else
         </button>
       </div>
     </div>

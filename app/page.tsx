@@ -52,6 +52,14 @@ function ProgressBar({ step }: { step: Step }) {
   )
 }
 
+function CardSpinner() {
+  return (
+    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm h-40 flex items-center justify-center">
+      <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+    </div>
+  )
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function HomePage() {
@@ -67,6 +75,8 @@ export default function HomePage() {
   const [recommendations, setRecommendations] = useState<Recommendations | null>(null)
   const [recLoading, setRecLoading] = useState(false)
   const [recError, setRecError] = useState<string | null>(null)
+  const [excludedIds, setExcludedIds] = useState<number[]>([])
+  const [refreshing, setRefreshing] = useState<'safe' | 'stretch' | 'hidden' | null>(null)
 
   // ─── Search ────────────────────────────────────────────────────────────────
 
@@ -151,6 +161,7 @@ export default function HomePage() {
         if (!res.ok) throw new Error(`Server error ${res.status}`)
         const data = await res.json()
         setRecommendations(data)
+        setExcludedIds([data.safe.title.id, data.stretch.title.id, data.hidden.title.id])
       } catch (err) {
         setRecError(err instanceof Error ? err.message : 'Could not load recommendations.')
       } finally {
@@ -160,6 +171,41 @@ export default function HomePage() {
       setSaveError(err instanceof Error ? err.message : 'Something went wrong. Please try again.')
     } finally {
       setSaving(false)
+    }
+  }
+
+  // ─── Already seen ─────────────────────────────────────────────────────────────
+
+  async function handleAlreadySeen(pick: 'safe' | 'stretch' | 'hidden') {
+    if (!recommendations) return
+    const seen = recommendations[pick].title
+
+    // Fire-and-forget: persist interaction so it's excluded in future sessions
+    saveWatchHistory([{ title: seen, interaction: 'watched_normally' }]).catch(() => {})
+
+    setRefreshing(pick)
+    try {
+      const res = await fetch('/api/recommendations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          interactions: entries.map((e) => ({
+            title: { tmdb_id: e.title.id, genres: e.title.genres, type: e.title.type },
+            interaction: e.interaction,
+          })),
+          selectedPlatforms: platforms,
+          excludeIds: excludedIds,
+        }),
+      })
+      if (!res.ok) throw new Error(`Server error ${res.status}`)
+      const newRecs = await res.json()
+      const newPick = newRecs[pick]
+      setRecommendations((prev) => prev ? { ...prev, [pick]: newPick } : newRecs)
+      setExcludedIds((prev) => [...prev, newPick.title.id])
+    } catch {
+      // Silently fail — keep existing card
+    } finally {
+      setRefreshing(null)
     }
   }
 
@@ -405,30 +451,45 @@ export default function HomePage() {
 
         {recommendations && !recLoading && (
           <div className="space-y-4">
-            <RecommendationCard
-              pick="safe"
-              title={recommendations.safe.title}
-              score={recommendations.safe.score}
-              reason={recommendations.safe.reason}
-              platforms={recommendations.safe.platforms}
-              platformFallback={recommendations.safe.platformFallback}
-            />
-            <RecommendationCard
-              pick="stretch"
-              title={recommendations.stretch.title}
-              score={recommendations.stretch.score}
-              reason={recommendations.stretch.reason}
-              platforms={recommendations.stretch.platforms}
-              platformFallback={recommendations.stretch.platformFallback}
-            />
-            <RecommendationCard
-              pick="hidden"
-              title={recommendations.hidden.title}
-              score={recommendations.hidden.score}
-              reason={recommendations.hidden.reason}
-              platforms={recommendations.hidden.platforms}
-              platformFallback={recommendations.hidden.platformFallback}
-            />
+            {refreshing === 'safe' ? (
+              <CardSpinner />
+            ) : (
+              <RecommendationCard
+                pick="safe"
+                title={recommendations.safe.title}
+                score={recommendations.safe.score}
+                reason={recommendations.safe.reason}
+                platforms={recommendations.safe.platforms}
+                platformFallback={recommendations.safe.platformFallback}
+                onAlreadySeen={() => handleAlreadySeen('safe')}
+              />
+            )}
+            {refreshing === 'stretch' ? (
+              <CardSpinner />
+            ) : (
+              <RecommendationCard
+                pick="stretch"
+                title={recommendations.stretch.title}
+                score={recommendations.stretch.score}
+                reason={recommendations.stretch.reason}
+                platforms={recommendations.stretch.platforms}
+                platformFallback={recommendations.stretch.platformFallback}
+                onAlreadySeen={() => handleAlreadySeen('stretch')}
+              />
+            )}
+            {refreshing === 'hidden' ? (
+              <CardSpinner />
+            ) : (
+              <RecommendationCard
+                pick="hidden"
+                title={recommendations.hidden.title}
+                score={recommendations.hidden.score}
+                reason={recommendations.hidden.reason}
+                platforms={recommendations.hidden.platforms}
+                platformFallback={recommendations.hidden.platformFallback}
+                onAlreadySeen={() => handleAlreadySeen('hidden')}
+              />
+            )}
           </div>
         )}
       </div>
@@ -444,6 +505,8 @@ export default function HomePage() {
             setSaveError(null)
             setRecommendations(null)
             setRecError(null)
+            setExcludedIds([])
+            setRefreshing(null)
           }}
         >
           Start over

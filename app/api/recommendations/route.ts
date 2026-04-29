@@ -7,6 +7,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json()
     const interactions: UserInteraction[] = body.interactions ?? []
     const selectedPlatforms: string[] = body.selectedPlatforms ?? []
+    const excludeIds: number[] = body.excludeIds ?? []
     const mood = body.mood ?? 'relaxed'
     const timeAvailable = body.timeAvailable ?? 120
 
@@ -15,6 +16,7 @@ export async function POST(req: NextRequest) {
       mood,
       timeAvailable,
       selectedPlatforms,
+      excludeIds,
     })
 
     return NextResponse.json(recommendations)
