@@ -26,6 +26,7 @@ export interface TMDbTitle {
   genres: string[]
   rating: number
   vote_count: number
+  popularity: number
   release_year: number | null
   overview: string | null
 }
@@ -44,6 +45,7 @@ function mapResult(item: any): TMDbTitle {
     genres: (item.genre_ids as number[]).map((id) => genreMap[id]).filter(Boolean),
     rating: Math.round(item.vote_average * 10) / 10,
     vote_count: item.vote_count,
+    popularity: Number(item.popularity ?? 0),
     release_year: rawDate ? new Date(rawDate).getFullYear() : null,
     overview: item.overview || null,
   }
