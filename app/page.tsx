@@ -8,6 +8,8 @@ import WatchEntry from '@/components/WatchEntry'
 import { saveWatchHistory } from '@/services/interactions'
 import type { TMDbTitle } from '@/services/tmdb'
 import type { WatchInteraction } from '@/services/interactions'
+import type { Recommendations } from '@/services/recommendation'
+import RecommendationCard from '@/components/RecommendationCard'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -22,7 +24,7 @@ const MAX_TITLES = 5
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Step = 'landing' | 'platforms' | 'watches' | 'done'
+type Step = 'landing' | 'platforms' | 'watches' | 'results'
 
 interface EntryState {
   title: TMDbTitle
@@ -31,7 +33,7 @@ interface EntryState {
 
 // ─── Progress indicator ───────────────────────────────────────────────────────
 
-const STEP_NUM: Record<Step, number> = { landing: 0, platforms: 1, watches: 2, done: 3 }
+const STEP_NUM: Record<Step, number> = { landing: 0, platforms: 1, watches: 2, results: 3 }
 
 function ProgressBar({ step }: { step: Step }) {
   if (step === 'landing') return null
@@ -61,6 +63,9 @@ export default function HomePage() {
   const [searching, setSearching] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [recommendations, setRecommendations] = useState<Recommendations | null>(null)
+  const [recLoading, setRecLoading] = useState(false)
+  const [recError, setRecError] = useState<string | null>(null)
 
   // ─── Search ────────────────────────────────────────────────────────────────
 
@@ -125,7 +130,29 @@ export default function HomePage() {
       await saveWatchHistory(
         entries.map((e) => ({ title: e.title, interaction: e.interaction! }))
       )
-      setStep('done')
+      setStep('results')
+      setRecLoading(true)
+      setRecError(null)
+      try {
+        const res = await fetch('/api/recommendations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            interactions: entries.map((e) => ({
+              title: { tmdb_id: e.title.id, genres: e.title.genres, type: e.title.type },
+              interaction: e.interaction,
+            })),
+            selectedPlatforms: platforms,
+          }),
+        })
+        if (!res.ok) throw new Error(`Server error ${res.status}`)
+        const data = await res.json()
+        setRecommendations(data)
+      } catch (err) {
+        setRecError(err instanceof Error ? err.message : 'Could not load recommendations.')
+      } finally {
+        setRecLoading(false)
+      }
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Something went wrong. Please try again.')
     } finally {
@@ -319,19 +346,85 @@ export default function HomePage() {
     )
   }
 
-  // ─── Done ─────────────────────────────────────────────────────────────────────
+  // ─── Results ──────────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-6">
-      <div className="max-w-sm w-full text-center space-y-8">
-        <ProgressBar step="done" />
-        <div className="space-y-4">
-          <div className="text-6xl">✅</div>
-          <h2 className="text-2xl font-bold">You&apos;re all set!</h2>
-          <p className="text-gray-500 leading-relaxed">
-            Your watch history has been saved. Personalised recommendations are coming soon.
-          </p>
+    <div className="min-h-screen flex flex-col max-w-xl mx-auto w-full px-4">
+      <ProgressBar step="results" />
+
+      <div className="flex-1 space-y-6 pb-8">
+        <div className="space-y-1">
+          <h2 className="text-xl font-bold">Your picks</h2>
+          <p className="text-gray-500 text-sm">Based on what you&apos;ve watched</p>
         </div>
+
+        {recLoading && (
+          <div className="flex flex-col items-center justify-center py-20 space-y-3">
+            <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+            <p className="text-sm text-gray-400 animate-pulse">Finding your best picks…</p>
+          </div>
+        )}
+
+        {recError && !recLoading && (
+          <div className="text-center py-12 space-y-4">
+            <p className="text-sm text-red-500">{recError}</p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={async () => {
+                setRecLoading(true)
+                setRecError(null)
+                try {
+                  const res = await fetch('/api/recommendations', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      interactions: entries.map((e) => ({
+                        title: { tmdb_id: e.title.id, genres: e.title.genres, type: e.title.type },
+                        interaction: e.interaction,
+                      })),
+                      selectedPlatforms: platforms,
+                    }),
+                  })
+                  if (!res.ok) throw new Error(`Server error ${res.status}`)
+                  setRecommendations(await res.json())
+                } catch (err) {
+                  setRecError(err instanceof Error ? err.message : 'Could not load recommendations.')
+                } finally {
+                  setRecLoading(false)
+                }
+              }}
+            >
+              Try again
+            </Button>
+          </div>
+        )}
+
+        {recommendations && !recLoading && (
+          <div className="space-y-4">
+            <RecommendationCard
+              pick="safe"
+              title={recommendations.safe.title}
+              score={recommendations.safe.score}
+              reason={recommendations.safe.reason}
+            />
+            <RecommendationCard
+              pick="stretch"
+              title={recommendations.stretch.title}
+              score={recommendations.stretch.score}
+              reason={recommendations.stretch.reason}
+            />
+            <RecommendationCard
+              pick="hidden"
+              title={recommendations.hidden.title}
+              score={recommendations.hidden.score}
+              reason={recommendations.hidden.reason}
+            />
+          </div>
+        )}
+      </div>
+
+      <div className="py-6 border-t">
         <Button
           variant="outline"
           className="w-full"
@@ -340,6 +433,8 @@ export default function HomePage() {
             setEntries([])
             setPlatforms([])
             setSaveError(null)
+            setRecommendations(null)
+            setRecError(null)
           }}
         >
           Start over
