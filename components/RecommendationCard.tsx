@@ -11,6 +11,8 @@ interface RecommendationCardProps {
   title: TMDbTitle
   score: number
   reason: string
+  platforms: string[]
+  platformFallback: boolean
 }
 
 const PICK_CONFIG = {
@@ -30,7 +32,7 @@ const PICK_CONFIG = {
 
 type Reaction = 'interested' | 'not_for_me' | 'watchlist' | null
 
-export default function RecommendationCard({ pick, title, score, reason }: RecommendationCardProps) {
+export default function RecommendationCard({ pick, title, score, reason, platforms, platformFallback }: RecommendationCardProps) {
   const [reaction, setReaction] = useState<Reaction>(null)
   const { label, bg } = PICK_CONFIG[pick]
   const year = title.release_year ?? '—'
@@ -80,6 +82,17 @@ export default function RecommendationCard({ pick, title, score, reason }: Recom
           </div>
 
           <p className="text-sm text-gray-500 leading-snug">{reason}</p>
+
+          {platforms.length > 0 && (
+            <p className="text-xs font-medium text-green-600">
+              Available on: {platforms.join(', ')}
+            </p>
+          )}
+          {platformFallback && (
+            <p className="text-xs text-amber-500">
+              May not be available on your platforms
+            </p>
+          )}
         </div>
       </div>
 

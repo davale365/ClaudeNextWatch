@@ -407,18 +407,24 @@ export default function HomePage() {
               title={recommendations.safe.title}
               score={recommendations.safe.score}
               reason={recommendations.safe.reason}
+              platforms={recommendations.safe.platforms}
+              platformFallback={recommendations.safe.platformFallback}
             />
             <RecommendationCard
               pick="stretch"
               title={recommendations.stretch.title}
               score={recommendations.stretch.score}
               reason={recommendations.stretch.reason}
+              platforms={recommendations.stretch.platforms}
+              platformFallback={recommendations.stretch.platformFallback}
             />
             <RecommendationCard
               pick="hidden"
               title={recommendations.hidden.title}
               score={recommendations.hidden.score}
               reason={recommendations.hidden.reason}
+              platforms={recommendations.hidden.platforms}
+              platformFallback={recommendations.hidden.platformFallback}
             />
           </div>
         )}

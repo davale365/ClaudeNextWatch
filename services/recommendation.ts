@@ -63,6 +63,92 @@ const WEIGHTS = {
   availability: 0.10,
 } as const
 
+// ─── Platform catalogue (MVP hardcoded map) ───────────────────────────────────
+// Platform names must match exactly the values in app/page.tsx PLATFORMS array.
+
+const PLATFORM_TITLES: Record<string, string[]> = {
+  'Netflix': [
+    'Breaking Bad', 'Stranger Things', 'Ozark', 'The Crown', 'Money Heist',
+    'Squid Game', 'Narcos', 'Dark', 'Wednesday', 'Bridgerton', 'Black Mirror',
+    'The Witcher', 'Mindhunter', 'Better Call Saul', 'Cobra Kai', 'Lupin',
+    'Emily in Paris', 'Peaky Blinders', 'Bird Box', 'The Irishman', 'Roma',
+    'Marriage Story', "Don't Look Up", 'Glass Onion: A Knives Out Mystery',
+    'Extraction', 'The Adam Project', 'The Gray Man', 'Rebel Moon',
+    'All Quiet on the Western Front', 'Enola Holmes', 'Lift',
+  ],
+  'Disney+': [
+    'The Mandalorian', 'WandaVision', 'Loki', 'Andor', 'The Book of Boba Fett',
+    'Hawkeye', 'Moon Knight', "She-Hulk: Attorney at Law", 'Secret Invasion',
+    "X-Men '97", 'Avatar: The Last Airbender',
+    'Avengers: Endgame', 'Black Panther', 'The Lion King', 'Encanto',
+    'Moana', 'Frozen', 'Toy Story 4', 'Soul', 'Coco',
+    'Thor: Love and Thunder', 'Doctor Strange in the Multiverse of Madness',
+    'Star Wars: The Clone Wars', 'Obi-Wan Kenobi',
+  ],
+  'Amazon Prime Video': [
+    'The Boys', 'Fallout', 'Reacher', 'The Marvelous Mrs. Maisel',
+    'Jack Ryan', 'The Lord of the Rings: The Rings of Power', 'Upload',
+    'Invincible', 'The Man in the High Castle', 'Fleabag', 'Good Omens',
+    'Manchester by the Sea', 'Sound of Metal', 'The Big Sick',
+    'Saltburn', 'Road House', 'Air',
+  ],
+  'Apple TV+': [
+    'Severance', 'Ted Lasso', 'The Morning Show', 'Slow Horses', 'Silo',
+    'Presumed Innocent', 'Sugar', 'Bad Monkey', 'Disclaimer', 'Shrinking',
+    'Mythic Quest', 'Foundation', 'For All Mankind', 'Hijack',
+    'CODA', 'Killers of the Flower Moon', 'Finch', 'Wolfs',
+  ],
+  'Max': [
+    'Game of Thrones', 'Succession', 'The Last of Us', 'House of the Dragon',
+    'Euphoria', 'The Wire', 'Chernobyl', 'Barry', 'The Sopranos',
+    'True Detective', 'Westworld', 'Band of Brothers', 'The Pacific',
+    'Six Feet Under', 'Deadwood', 'Curb Your Enthusiasm', 'Insecure',
+    'Watchmen', 'The White Lotus', 'Industry', 'Peacemaker',
+    'Dune: Part One', 'Dune: Part Two', 'Barbie', 'Oppenheimer', 'The Batman',
+  ],
+  'Hulu': [
+    'The Bear', "The Handmaid's Tale", 'Only Murders in the Building',
+    "It's Always Sunny in Philadelphia", 'Abbott Elementary', 'The Great',
+    'Reservation Dogs', 'The Dropout', 'Pam & Tommy', 'Prey', 'Palm Springs',
+    'Little Fires Everywhere', 'Normal People',
+  ],
+  'Peacock': [
+    'The Traitors', 'Bel-Air', 'Poker Face', 'Rutherford Falls', 'Downton Abbey',
+  ],
+  'Paramount+': [
+    'Yellowstone', '1883', '1923', 'Tulsa King', 'Mayor of Kingstown',
+    'Star Trek: Strange New Worlds', 'Star Trek: Discovery', 'Evil', 'Lioness',
+    'Top Gun: Maverick',
+  ],
+  'BBC iPlayer': [
+    'The Night Manager', 'Peaky Blinders', 'Sherlock', 'Doctor Who',
+    'Happy Valley', 'This Is Going to Hurt', 'Fleabag', 'Luther', 'Bodyguard',
+    'Line of Duty', 'Killing Eve', 'Vigil', 'Showtrial',
+  ],
+  'MUBI': [
+    'Portrait of a Lady on Fire', 'Carol', 'Moonlight', 'The Zone of Interest',
+    'Aftersun', 'Saint Maud', 'The Worst Person in the World',
+    'Drive My Car', 'Petite Maman',
+  ],
+  'Shudder': [
+    'Hereditary', 'Midsommar', 'The Witch', 'Creep', 'Host',
+    'Terrifier', 'Possessor', 'Barbarian',
+  ],
+  'BritBox': [
+    'Vera', 'Midsomer Murders', 'Shetland', 'Grantchester', 'Broadchurch',
+    'Inside No. 9', "Agatha Christie's Poirot",
+  ],
+}
+
+// Inverse map built at module load: title name → platforms it appears on
+const TITLE_PLATFORMS: Record<string, string[]> = {}
+for (const [platform, titles] of Object.entries(PLATFORM_TITLES)) {
+  for (const t of titles) {
+    if (!TITLE_PLATFORMS[t]) TITLE_PLATFORMS[t] = []
+    TITLE_PLATFORMS[t].push(platform)
+  }
+}
+
 // ─── Sub-scorers (exported for testability) ───────────────────────────────────
 
 /**
@@ -206,6 +292,8 @@ export interface RecommendationResult {
   title: TMDbTitle
   score: number
   reason: string
+  platforms: string[]        // selected platforms this title is available on
+  platformFallback: boolean  // true when no platform match found and this is a fallback
 }
 
 export interface Recommendations {
@@ -265,8 +353,8 @@ function tmdbToCandidate(t: TMDbTitle): Candidate {
     rating: t.rating,
     vote_count: t.vote_count,
     popularity: t.popularity,
-    runtime_minutes: null, // not available in search/discover results
-    platforms: [],         // populated from DB when available; defaults to 0.5 availability
+    runtime_minutes: null,
+    platforms: TITLE_PLATFORMS[t.title] ?? [],
   }
 }
 
@@ -316,75 +404,109 @@ export async function getRecommendations({
   }))
 
   // Build scored pool: exclude already-watched and fully-avoided titles
-  interface ScoredTitle { tmdbTitle: TMDbTitle; result: ScoreResult }
+  interface ScoredTitle { tmdbTitle: TMDbTitle; candidate: Candidate; result: ScoreResult }
 
   const pool: ScoredTitle[] = [...movies, ...shows]
     .filter((t) => {
       if (watchedIds.has(t.id)) return false
-      // Drop a title only if every one of its genres is in the avoided list
       if (avoidedGenres.size > 0 && t.genres.length > 0) {
         return !t.genres.every((g) => avoidedGenres.has(g))
       }
       return true
     })
-    .map((tmdbTitle) => ({
-      tmdbTitle,
-      result: getConfidenceScore({
-        candidate: tmdbToCandidate(tmdbTitle),
-        userPreferences,
-        mood,
-        timeAvailable,
-        selectedPlatforms,
-      }),
-    }))
+    .map((tmdbTitle) => {
+      const candidate = tmdbToCandidate(tmdbTitle)
+      return {
+        tmdbTitle,
+        candidate,
+        result: getConfidenceScore({ candidate, userPreferences, mood, timeAvailable, selectedPlatforms }),
+      }
+    })
     .sort((a, b) => b.result.score - a.result.score)
 
+  // ── Platform filtering ────────────────────────────────────────────────────
+  // When the user selected platforms, prefer titles known to be on them.
+  const platformPool = selectedPlatforms.length > 0
+    ? pool.filter((s) => s.candidate.platforms.some((p) => selectedPlatforms.includes(p)))
+    : pool
+
+  // Try the predicate in platformPool first, then fall back to full pool.
+  // platformFallback = true means no platform match was found for this pick.
+  function tryPick(
+    pred: (s: ScoredTitle) => boolean,
+    exclude: Set<number>
+  ): { item: ScoredTitle; platformFallback: boolean } | null {
+    const pp = platformPool.find((s) => !exclude.has(s.tmdbTitle.id) && pred(s))
+    if (pp) return { item: pp, platformFallback: false }
+    const fp = pool.find((s) => !exclude.has(s.tmdbTitle.id) && pred(s))
+    if (fp) return { item: fp, platformFallback: selectedPlatforms.length > 0 }
+    return null
+  }
+
+  function anyPick(exclude: Set<number>): { item: ScoredTitle; platformFallback: boolean } | null {
+    const pp = platformPool.find((s) => !exclude.has(s.tmdbTitle.id))
+    if (pp) return { item: pp, platformFallback: false }
+    const fp = pool.find((s) => !exclude.has(s.tmdbTitle.id))
+    if (fp) return { item: fp, platformFallback: selectedPlatforms.length > 0 }
+    return null
+  }
+
+  const usedIds = new Set<number>()
+
   // ── Safe pick: highest score with strong genre alignment ──────────────────
-  const safeIdx = pool.findIndex((s) => s.result.breakdown.tasteMatch >= 0.4)
-  const safe = pool[safeIdx !== -1 ? safeIdx : 0]
-  const usedIds = new Set([safe?.tmdbTitle.id])
+  const safePicked =
+    tryPick((s) => s.result.breakdown.tasteMatch >= 0.4, usedIds) ??
+    anyPick(usedIds) ??
+    { item: pool[0], platformFallback: selectedPlatforms.length > 0 }
+  if (safePicked.item) usedIds.add(safePicked.item.tmdbTitle.id)
 
   // ── Stretch pick: good score but from a different genre cluster ───────────
-  const stretchIdx = pool.findIndex(
-    (s) =>
-      !usedIds.has(s.tmdbTitle.id) &&
-      s.result.breakdown.tasteMatch < 0.35 &&
-      s.result.score > 20
-  )
-  const stretchFallback = pool.findIndex((s) => !usedIds.has(s.tmdbTitle.id))
-  const stretch = pool[stretchIdx !== -1 ? stretchIdx : stretchFallback]
-  if (stretch) usedIds.add(stretch.tmdbTitle.id)
+  const stretchPicked =
+    tryPick((s) => s.result.breakdown.tasteMatch < 0.35 && s.result.score > 20, usedIds) ??
+    anyPick(usedIds) ??
+    safePicked
+
+  if (stretchPicked.item && stretchPicked.item.tmdbTitle.id !== safePicked.item?.tmdbTitle.id) {
+    usedIds.add(stretchPicked.item.tmdbTitle.id)
+  }
 
   // ── Hidden gem: low vote_count but decent score ───────────────────────────
-  const hiddenIdx = pool.findIndex(
-    (s) =>
-      !usedIds.has(s.tmdbTitle.id) &&
-      s.tmdbTitle.vote_count < 5000 &&
-      s.result.score > 15
-  )
-  const hiddenFallback = pool.findIndex((s) => !usedIds.has(s.tmdbTitle.id))
-  const hidden = pool[hiddenIdx !== -1 ? hiddenIdx : hiddenFallback] ?? stretch ?? safe
+  const hiddenPicked =
+    tryPick((s) => s.tmdbTitle.vote_count < 5000 && s.result.score > 15, usedIds) ??
+    anyPick(usedIds) ??
+    stretchPicked
 
-  // Ensure we always have three picks (degenerate case: very few candidates)
-  const safePick   = safe   ?? pool[0]
-  const stretchPick = stretch ?? pool[1] ?? safePick
-  const hiddenPick  = hidden  ?? pool[2] ?? stretchPick
+  // Platforms to display: intersection of title platforms and selected platforms
+  function displayPlatforms(candidate: Candidate): string[] {
+    if (selectedPlatforms.length === 0) return []
+    return candidate.platforms.filter((p) => selectedPlatforms.includes(p))
+  }
+
+  const safePick    = safePicked.item    ?? pool[0]
+  const stretchPick = stretchPicked.item ?? pool[1] ?? safePick
+  const hiddenPick  = hiddenPicked.item  ?? pool[2] ?? stretchPick
 
   return {
     safe: {
-      title:  safePick.tmdbTitle,
-      score:  safePick.result.score,
-      reason: makeReason('safe', safePick.tmdbTitle, dominantGenres),
+      title:            safePick.tmdbTitle,
+      score:            safePick.result.score,
+      reason:           makeReason('safe', safePick.tmdbTitle, dominantGenres),
+      platforms:        displayPlatforms(safePick.candidate),
+      platformFallback: safePicked.platformFallback,
     },
     stretch: {
-      title:  stretchPick.tmdbTitle,
-      score:  stretchPick.result.score,
-      reason: makeReason('stretch', stretchPick.tmdbTitle, dominantGenres),
+      title:            stretchPick.tmdbTitle,
+      score:            stretchPick.result.score,
+      reason:           makeReason('stretch', stretchPick.tmdbTitle, dominantGenres),
+      platforms:        displayPlatforms(stretchPick.candidate),
+      platformFallback: stretchPicked.platformFallback,
     },
     hidden: {
-      title:  hiddenPick.tmdbTitle,
-      score:  hiddenPick.result.score,
-      reason: makeReason('hidden', hiddenPick.tmdbTitle, dominantGenres),
+      title:            hiddenPick.tmdbTitle,
+      score:            hiddenPick.result.score,
+      reason:           makeReason('hidden', hiddenPick.tmdbTitle, dominantGenres),
+      platforms:        displayPlatforms(hiddenPick.candidate),
+      platformFallback: hiddenPicked.platformFallback,
     },
   }
 }
