@@ -1,5 +1,7 @@
 import type { Mood } from '@/types/database'
 import type { WatchInteraction } from './interactions'
+import type { TMDbTitle } from './tmdb'
+import { fetchCandidatesByGenres } from './tmdb'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -186,5 +188,203 @@ export function getConfidenceScore({
   return {
     score: Math.round(rawScore * 100),
     breakdown,
+  }
+}
+
+// ─── Recommendation generator ─────────────────────────────────────────────────
+
+export interface UserInteraction {
+  title: {
+    tmdb_id: number
+    genres: string[]
+    type: 'movie' | 'tv'
+  }
+  interaction: WatchInteraction
+}
+
+export interface RecommendationResult {
+  title: TMDbTitle
+  score: number
+  reason: string
+}
+
+export interface Recommendations {
+  safe: RecommendationResult
+  stretch: RecommendationResult
+  hidden: RecommendationResult
+}
+
+export interface RecommendationInput {
+  userInteractions: UserInteraction[]
+  mood: Mood
+  timeAvailable: number
+  selectedPlatforms: string[]
+}
+
+// ─── Internal helpers ─────────────────────────────────────────────────────────
+
+interface PreferenceProfile {
+  dominantGenres: string[]   // top genres by frequency from binged/liked titles
+  avoidedGenres: Set<string> // genres from dropped/not_for_me titles
+  watchedIds: Set<number>    // tmdb_ids already seen — exclude from candidates
+}
+
+function buildPreferenceProfile(interactions: UserInteraction[]): PreferenceProfile {
+  const positive = new Set<WatchInteraction>(['binged', 'liked'])
+  const negative = new Set<WatchInteraction>(['dropped', 'not_for_me'])
+
+  const genreCounts = new Map<string, number>()
+  const avoidedGenres = new Set<string>()
+  const watchedIds = new Set<number>()
+
+  for (const { title, interaction } of interactions) {
+    watchedIds.add(title.tmdb_id)
+
+    if (positive.has(interaction)) {
+      title.genres.forEach((g) => genreCounts.set(g, (genreCounts.get(g) ?? 0) + 1))
+    }
+    if (negative.has(interaction)) {
+      title.genres.forEach((g) => avoidedGenres.add(g))
+    }
+  }
+
+  const dominantGenres = [...genreCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([genre]) => genre)
+    .slice(0, 3)
+
+  return { dominantGenres, avoidedGenres, watchedIds }
+}
+
+function tmdbToCandidate(t: TMDbTitle): Candidate {
+  return {
+    tmdb_id: t.id,
+    title: t.title,
+    type: t.type,
+    genres: t.genres,
+    rating: t.rating,
+    vote_count: t.vote_count,
+    popularity: t.popularity,
+    runtime_minutes: null, // not available in search/discover results
+    platforms: [],         // populated from DB when available; defaults to 0.5 availability
+  }
+}
+
+function makeReason(
+  pick: 'safe' | 'stretch' | 'hidden',
+  title: TMDbTitle,
+  dominantGenres: string[]
+): string {
+  const medium = title.type === 'movie' ? 'film' : 'show'
+  const topGenre = dominantGenres[0]
+
+  switch (pick) {
+    case 'safe':
+      return topGenre
+        ? `Highly rated ${medium} that matches your love of ${topGenre}`
+        : `Highly rated ${medium} that matches what you've been watching`
+    case 'stretch':
+      return 'Slightly different from your usual taste, but strong reviews suggest you might enjoy it'
+    case 'hidden':
+      return 'Less popular but closely aligns with what you\'ve been watching'
+  }
+}
+
+// ─── Main generator ───────────────────────────────────────────────────────────
+
+export async function getRecommendations({
+  userInteractions,
+  mood,
+  timeAvailable,
+  selectedPlatforms,
+}: RecommendationInput): Promise<Recommendations> {
+  const { dominantGenres, avoidedGenres, watchedIds } =
+    buildPreferenceProfile(userInteractions)
+
+  // Fall back to broad genres if the user has no positive watch history
+  const fetchGenres = dominantGenres.length > 0 ? dominantGenres : ['Drama', 'Comedy', 'Action']
+
+  // Fetch up to 40 candidates: 20 movies + 20 TV shows in parallel
+  const [movies, shows] = await Promise.all([
+    fetchCandidatesByGenres(fetchGenres, 'movie'),
+    fetchCandidatesByGenres(fetchGenres, 'tv'),
+  ])
+
+  const userPreferences: UserPreference[] = userInteractions.map(({ title, interaction }) => ({
+    genres: title.genres,
+    interaction,
+  }))
+
+  // Build scored pool: exclude already-watched and fully-avoided titles
+  interface ScoredTitle { tmdbTitle: TMDbTitle; result: ScoreResult }
+
+  const pool: ScoredTitle[] = [...movies, ...shows]
+    .filter((t) => {
+      if (watchedIds.has(t.id)) return false
+      // Drop a title only if every one of its genres is in the avoided list
+      if (avoidedGenres.size > 0 && t.genres.length > 0) {
+        return !t.genres.every((g) => avoidedGenres.has(g))
+      }
+      return true
+    })
+    .map((tmdbTitle) => ({
+      tmdbTitle,
+      result: getConfidenceScore({
+        candidate: tmdbToCandidate(tmdbTitle),
+        userPreferences,
+        mood,
+        timeAvailable,
+        selectedPlatforms,
+      }),
+    }))
+    .sort((a, b) => b.result.score - a.result.score)
+
+  // ── Safe pick: highest score with strong genre alignment ──────────────────
+  const safeIdx = pool.findIndex((s) => s.result.breakdown.tasteMatch >= 0.4)
+  const safe = pool[safeIdx !== -1 ? safeIdx : 0]
+  const usedIds = new Set([safe?.tmdbTitle.id])
+
+  // ── Stretch pick: good score but from a different genre cluster ───────────
+  const stretchIdx = pool.findIndex(
+    (s) =>
+      !usedIds.has(s.tmdbTitle.id) &&
+      s.result.breakdown.tasteMatch < 0.35 &&
+      s.result.score > 20
+  )
+  const stretchFallback = pool.findIndex((s) => !usedIds.has(s.tmdbTitle.id))
+  const stretch = pool[stretchIdx !== -1 ? stretchIdx : stretchFallback]
+  if (stretch) usedIds.add(stretch.tmdbTitle.id)
+
+  // ── Hidden gem: low vote_count but decent score ───────────────────────────
+  const hiddenIdx = pool.findIndex(
+    (s) =>
+      !usedIds.has(s.tmdbTitle.id) &&
+      s.tmdbTitle.vote_count < 5000 &&
+      s.result.score > 15
+  )
+  const hiddenFallback = pool.findIndex((s) => !usedIds.has(s.tmdbTitle.id))
+  const hidden = pool[hiddenIdx !== -1 ? hiddenIdx : hiddenFallback] ?? stretch ?? safe
+
+  // Ensure we always have three picks (degenerate case: very few candidates)
+  const safePick   = safe   ?? pool[0]
+  const stretchPick = stretch ?? pool[1] ?? safePick
+  const hiddenPick  = hidden  ?? pool[2] ?? stretchPick
+
+  return {
+    safe: {
+      title:  safePick.tmdbTitle,
+      score:  safePick.result.score,
+      reason: makeReason('safe', safePick.tmdbTitle, dominantGenres),
+    },
+    stretch: {
+      title:  stretchPick.tmdbTitle,
+      score:  stretchPick.result.score,
+      reason: makeReason('stretch', stretchPick.tmdbTitle, dominantGenres),
+    },
+    hidden: {
+      title:  hiddenPick.tmdbTitle,
+      score:  hiddenPick.result.score,
+      reason: makeReason('hidden', hiddenPick.tmdbTitle, dominantGenres),
+    },
   }
 }
