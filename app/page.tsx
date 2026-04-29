@@ -61,6 +61,7 @@ export default function HomePage() {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<TMDbTitle[]>([])
   const [searching, setSearching] = useState(false)
+  const [noMatch, setNoMatch] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [recommendations, setRecommendations] = useState<Recommendations | null>(null)
@@ -70,12 +71,14 @@ export default function HomePage() {
   // ─── Search ────────────────────────────────────────────────────────────────
 
   const runSearch = useCallback(async (q: string) => {
-    if (!q.trim()) { setResults([]); return }
+    if (!q.trim()) { setResults([]); setNoMatch(false); return }
     setSearching(true)
+    setNoMatch(false)
     try {
       const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`)
       const data = await res.json()
       setResults(data.results ?? [])
+      setNoMatch(data.noMatch ?? false)
     } catch {
       setResults([])
     } finally {
@@ -85,7 +88,7 @@ export default function HomePage() {
 
   useEffect(() => {
     if (step !== 'watches') return
-    const t = setTimeout(() => runSearch(query), 400)
+    const t = setTimeout(() => runSearch(query), 300)
     return () => clearTimeout(t)
   }, [query, runSearch, step])
 
@@ -308,8 +311,8 @@ export default function HomePage() {
                 </div>
               )}
 
-              {!searching && query.trim() && results.length === 0 && (
-                <p className="text-sm text-gray-400">No results for &quot;{query}&quot;</p>
+              {!searching && noMatch && (
+                <p className="text-sm text-gray-400">No exact match. Try a different spelling.</p>
               )}
 
               {entries.length === 0 && !query && (
