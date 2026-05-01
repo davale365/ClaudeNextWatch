@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import Image from 'next/image'
 import type { TMDbTitle } from '@/services/tmdb'
+import { DEFAULT_REGION } from '@/services/recommendation'
 
 type PickType = 'safe' | 'stretch' | 'hidden'
 
@@ -14,33 +15,29 @@ interface RecommendationCardProps {
   platforms: string[]
   platformFallback: boolean
   onAlreadySeen: () => void
+  onNotForMe: () => void
+  onInterested: () => void
 }
 
 const PICK_CONFIG = {
-  safe: {
-    label: 'Safe Pick',
-    bg: 'bg-blue-100 text-blue-700',
-  },
-  stretch: {
-    label: 'Stretch Pick',
-    bg: 'bg-purple-100 text-purple-700',
-  },
-  hidden: {
-    label: 'Hidden Gem',
-    bg: 'bg-amber-100 text-amber-700',
-  },
+  safe:    { label: 'Safe Pick',    bg: 'bg-blue-100 text-blue-700' },
+  stretch: { label: 'Stretch Pick', bg: 'bg-purple-100 text-purple-700' },
+  hidden:  { label: 'Hidden Gem',   bg: 'bg-amber-100 text-amber-700' },
 }
 
-type Reaction = 'interested' | 'not_for_me' | 'watchlist' | null
-
-export default function RecommendationCard({ pick, title, score, reason, platforms, platformFallback, onAlreadySeen }: RecommendationCardProps) {
-  const [reaction, setReaction] = useState<Reaction>(null)
+export default function RecommendationCard({
+  pick, title, score, reason, platforms, platformFallback,
+  onAlreadySeen, onNotForMe, onInterested,
+}: RecommendationCardProps) {
+  const [watchlisted, setWatchlisted] = useState(false)
+  const [interested, setInterested]   = useState(false)
   const { label, bg } = PICK_CONFIG[pick]
-  const year = title.release_year ?? '—'
+  const year   = title.release_year ?? '—'
   const medium = title.type === 'movie' ? 'Movie' : 'TV Show'
 
-  function toggle(r: Exclude<Reaction, null>) {
-    setReaction((prev) => (prev === r ? null : r))
+  function handleInterested() {
+    setInterested(true)
+    onInterested()
   }
 
   return (
@@ -71,11 +68,8 @@ export default function RecommendationCard({ pick, title, score, reason, platfor
                 {label}
               </span>
               <h3 className="font-bold text-gray-900 leading-snug">{title.title}</h3>
-              <p className="text-xs text-gray-400 mt-0.5">
-                {year} · {medium}
-              </p>
+              <p className="text-xs text-gray-400 mt-0.5">{year} · {medium}</p>
             </div>
-            {/* Confidence score */}
             <div className="flex-shrink-0 text-right">
               <p className="text-2xl font-bold text-gray-900 tabular-nums leading-none">{score}</p>
               <p className="text-xs text-gray-400">/ 100</p>
@@ -84,14 +78,15 @@ export default function RecommendationCard({ pick, title, score, reason, platfor
 
           <p className="text-sm text-gray-500 leading-snug">{reason}</p>
 
+          {/* Platform availability */}
           {platforms.length > 0 && (
             <p className="text-xs font-medium text-green-600">
-              Available on: {platforms.join(', ')}
+              Available on: {platforms.join(', ')} · {DEFAULT_REGION}
             </p>
           )}
           {platformFallback && (
             <p className="text-xs text-amber-500">
-              May not be available on your platforms
+              May not be available on your selected platforms ({DEFAULT_REGION})
             </p>
           )}
         </div>
@@ -100,32 +95,25 @@ export default function RecommendationCard({ pick, title, score, reason, platfor
       {/* Action buttons */}
       <div className="border-t border-gray-100 grid grid-cols-3 divide-x divide-gray-100">
         <button
-          onClick={() => toggle('interested')}
+          onClick={handleInterested}
+          disabled={interested}
           className={`py-3 text-xs font-medium transition-colors ${
-            reaction === 'interested'
-              ? 'bg-green-50 text-green-700'
-              : 'text-gray-500 hover:bg-gray-50'
+            interested ? 'bg-green-50 text-green-700' : 'text-gray-500 hover:bg-gray-50'
           }`}
         >
-          Interested
+          {interested ? '✓ Interested' : 'Interested'}
         </button>
         <button
-          onClick={() => toggle('watchlist')}
+          onClick={() => setWatchlisted((w) => !w)}
           className={`py-3 text-xs font-medium transition-colors ${
-            reaction === 'watchlist'
-              ? 'bg-blue-50 text-blue-700'
-              : 'text-gray-500 hover:bg-gray-50'
+            watchlisted ? 'bg-blue-50 text-blue-700' : 'text-gray-500 hover:bg-gray-50'
           }`}
         >
-          + Watchlist
+          {watchlisted ? '✓ Watchlisted' : '+ Watchlist'}
         </button>
         <button
-          onClick={() => toggle('not_for_me')}
-          className={`py-3 text-xs font-medium transition-colors ${
-            reaction === 'not_for_me'
-              ? 'bg-red-50 text-red-600'
-              : 'text-gray-500 hover:bg-gray-50'
-          }`}
+          onClick={onNotForMe}
+          className="py-3 text-xs font-medium text-gray-500 hover:bg-red-50 hover:text-red-600 transition-colors"
         >
           Not for me
         </button>

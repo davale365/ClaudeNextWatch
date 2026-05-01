@@ -68,3 +68,8 @@ export async function saveWatchHistory(entries: WatchEntry[]): Promise<void> {
     if (interactionError) throw new Error(`Failed to save interaction: ${interactionError.message}`)
   }
 }
+
+// Lightweight wrapper for saving a single post-recommendation interaction.
+export async function saveInteraction(title: TMDbTitle, interaction: WatchInteraction): Promise<void> {
+  await saveWatchHistory([{ title, interaction }])
+}

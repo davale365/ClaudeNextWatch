@@ -2,6 +2,9 @@ import type { Mood } from '@/types/database'
 import type { WatchInteraction } from './interactions'
 import type { TMDbTitle } from './tmdb'
 import { fetchCandidatesByGenres } from './tmdb'
+import { getPlatformsForTitle, DEFAULT_REGION } from './availability'
+
+export { DEFAULT_REGION }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -62,92 +65,6 @@ const WEIGHTS = {
   context:      0.10,
   availability: 0.10,
 } as const
-
-// ─── Platform catalogue (MVP hardcoded map) ───────────────────────────────────
-// Platform names must match exactly the values in app/page.tsx PLATFORMS array.
-
-const PLATFORM_TITLES: Record<string, string[]> = {
-  'Netflix': [
-    'Breaking Bad', 'Stranger Things', 'Ozark', 'The Crown', 'Money Heist',
-    'Squid Game', 'Narcos', 'Dark', 'Wednesday', 'Bridgerton', 'Black Mirror',
-    'The Witcher', 'Mindhunter', 'Better Call Saul', 'Cobra Kai', 'Lupin',
-    'Emily in Paris', 'Peaky Blinders', 'Bird Box', 'The Irishman', 'Roma',
-    'Marriage Story', "Don't Look Up", 'Glass Onion: A Knives Out Mystery',
-    'Extraction', 'The Adam Project', 'The Gray Man', 'Rebel Moon',
-    'All Quiet on the Western Front', 'Enola Holmes', 'Lift',
-  ],
-  'Disney+': [
-    'The Mandalorian', 'WandaVision', 'Loki', 'Andor', 'The Book of Boba Fett',
-    'Hawkeye', 'Moon Knight', "She-Hulk: Attorney at Law", 'Secret Invasion',
-    "X-Men '97", 'Avatar: The Last Airbender',
-    'Avengers: Endgame', 'Black Panther', 'The Lion King', 'Encanto',
-    'Moana', 'Frozen', 'Toy Story 4', 'Soul', 'Coco',
-    'Thor: Love and Thunder', 'Doctor Strange in the Multiverse of Madness',
-    'Star Wars: The Clone Wars', 'Obi-Wan Kenobi',
-  ],
-  'Amazon Prime Video': [
-    'The Boys', 'Fallout', 'Reacher', 'The Marvelous Mrs. Maisel',
-    'Jack Ryan', 'The Lord of the Rings: The Rings of Power', 'Upload',
-    'Invincible', 'The Man in the High Castle', 'Fleabag', 'Good Omens',
-    'Manchester by the Sea', 'Sound of Metal', 'The Big Sick',
-    'Saltburn', 'Road House', 'Air',
-  ],
-  'Apple TV+': [
-    'Severance', 'Ted Lasso', 'The Morning Show', 'Slow Horses', 'Silo',
-    'Presumed Innocent', 'Sugar', 'Bad Monkey', 'Disclaimer', 'Shrinking',
-    'Mythic Quest', 'Foundation', 'For All Mankind', 'Hijack',
-    'CODA', 'Killers of the Flower Moon', 'Finch', 'Wolfs',
-  ],
-  'Max': [
-    'Game of Thrones', 'Succession', 'The Last of Us', 'House of the Dragon',
-    'Euphoria', 'The Wire', 'Chernobyl', 'Barry', 'The Sopranos',
-    'True Detective', 'Westworld', 'Band of Brothers', 'The Pacific',
-    'Six Feet Under', 'Deadwood', 'Curb Your Enthusiasm', 'Insecure',
-    'Watchmen', 'The White Lotus', 'Industry', 'Peacemaker',
-    'Dune: Part One', 'Dune: Part Two', 'Barbie', 'Oppenheimer', 'The Batman',
-  ],
-  'Hulu': [
-    'The Bear', "The Handmaid's Tale", 'Only Murders in the Building',
-    "It's Always Sunny in Philadelphia", 'Abbott Elementary', 'The Great',
-    'Reservation Dogs', 'The Dropout', 'Pam & Tommy', 'Prey', 'Palm Springs',
-    'Little Fires Everywhere', 'Normal People',
-  ],
-  'Peacock': [
-    'The Traitors', 'Bel-Air', 'Poker Face', 'Rutherford Falls', 'Downton Abbey',
-  ],
-  'Paramount+': [
-    'Yellowstone', '1883', '1923', 'Tulsa King', 'Mayor of Kingstown',
-    'Star Trek: Strange New Worlds', 'Star Trek: Discovery', 'Evil', 'Lioness',
-    'Top Gun: Maverick',
-  ],
-  'BBC iPlayer': [
-    'The Night Manager', 'Peaky Blinders', 'Sherlock', 'Doctor Who',
-    'Happy Valley', 'This Is Going to Hurt', 'Fleabag', 'Luther', 'Bodyguard',
-    'Line of Duty', 'Killing Eve', 'Vigil', 'Showtrial',
-  ],
-  'MUBI': [
-    'Portrait of a Lady on Fire', 'Carol', 'Moonlight', 'The Zone of Interest',
-    'Aftersun', 'Saint Maud', 'The Worst Person in the World',
-    'Drive My Car', 'Petite Maman',
-  ],
-  'Shudder': [
-    'Hereditary', 'Midsommar', 'The Witch', 'Creep', 'Host',
-    'Terrifier', 'Possessor', 'Barbarian',
-  ],
-  'BritBox': [
-    'Vera', 'Midsomer Murders', 'Shetland', 'Grantchester', 'Broadchurch',
-    'Inside No. 9', "Agatha Christie's Poirot",
-  ],
-}
-
-// Inverse map built at module load: title name → platforms it appears on
-const TITLE_PLATFORMS: Record<string, string[]> = {}
-for (const [platform, titles] of Object.entries(PLATFORM_TITLES)) {
-  for (const t of titles) {
-    if (!TITLE_PLATFORMS[t]) TITLE_PLATFORMS[t] = []
-    TITLE_PLATFORMS[t].push(platform)
-  }
-}
 
 // ─── Sub-scorers (exported for testability) ───────────────────────────────────
 
@@ -355,7 +272,7 @@ function tmdbToCandidate(t: TMDbTitle): Candidate {
     vote_count: t.vote_count,
     popularity: t.popularity,
     runtime_minutes: null,
-    platforms: TITLE_PLATFORMS[t.title] ?? [],
+    platforms: getPlatformsForTitle(t.title),
   }
 }
 
@@ -406,7 +323,10 @@ export async function getRecommendations({
 
   interface ScoredTitle { tmdbTitle: TMDbTitle; candidate: Candidate; result: ScoreResult }
 
-  const QUALITY_FLOOR = 50
+  // Absolute quality floors per slot
+  const SAFE_FLOOR    = 65
+  const STRETCH_FLOOR = 60
+  const HIDDEN_FLOOR  = 55
 
   function isEligible(t: TMDbTitle): boolean {
     if (watchedIds.has(t.id)) return false
@@ -430,8 +350,14 @@ export async function getRecommendations({
     .map(scoreTitle)
     .sort((a, b) => b.result.score - a.result.score)
 
-  // ── Expand pool if fewer than 3 candidates meet the quality floor ─────────
-  if (pool.filter((s) => s.result.score >= QUALITY_FLOOR).length < 3) {
+  // ── Hard platform filter ──────────────────────────────────────────────────
+  // When platforms are selected, only consider titles confirmed on those platforms.
+  const activePool = selectedPlatforms.length > 0
+    ? pool.filter((s) => s.candidate.platforms.some((p) => selectedPlatforms.includes(p)))
+    : pool
+
+  // ── Expand if fewer than 3 candidates meet the safe floor ────────────────
+  if (activePool.filter((s) => s.result.score >= SAFE_FLOOR).length < 3) {
     const broadGenres = ['Drama', 'Comedy', 'Action', 'Thriller', 'Adventure', 'Science Fiction']
     const poolIds = new Set(pool.map((s) => s.tmdbTitle.id))
     const [moreMovies, moreShows] = await Promise.all([
@@ -442,70 +368,51 @@ export async function getRecommendations({
       .filter((t) => !poolIds.has(t.id) && isEligible(t))
       .map(scoreTitle)
     pool = [...pool, ...additional].sort((a, b) => b.result.score - a.result.score)
+    // Rebuild activePool with the expanded pool
+    const expanded = selectedPlatforms.length > 0
+      ? pool.filter((s) => s.candidate.platforms.some((p) => selectedPlatforms.includes(p)))
+      : pool
+    expanded.forEach((s) => { if (!activePool.find((a) => a.tmdbTitle.id === s.tmdbTitle.id)) activePool.push(s) })
+    activePool.sort((a, b) => b.result.score - a.result.score)
   }
-
-  // ── Platform filtering ────────────────────────────────────────────────────
-  const platformPool = selectedPlatforms.length > 0
-    ? pool.filter((s) => s.candidate.platforms.some((p) => selectedPlatforms.includes(p)))
-    : pool
 
   function tryPick(
     pred: (s: ScoredTitle) => boolean,
     exclude: Set<number>
-  ): { item: ScoredTitle; platformFallback: boolean } | null {
-    const pp = platformPool.find((s) => !exclude.has(s.tmdbTitle.id) && pred(s))
-    if (pp) return { item: pp, platformFallback: false }
-    const fp = pool.find((s) => !exclude.has(s.tmdbTitle.id) && pred(s))
-    if (fp) return { item: fp, platformFallback: selectedPlatforms.length > 0 }
-    return null
+  ): ScoredTitle | null {
+    return activePool.find((s) => !exclude.has(s.tmdbTitle.id) && pred(s)) ?? null
   }
 
-  function anyPick(exclude: Set<number>): { item: ScoredTitle; platformFallback: boolean } | null {
-    const pp = platformPool.find((s) => !exclude.has(s.tmdbTitle.id))
-    if (pp) return { item: pp, platformFallback: false }
-    const fp = pool.find((s) => !exclude.has(s.tmdbTitle.id))
-    if (fp) return { item: fp, platformFallback: selectedPlatforms.length > 0 }
-    return null
+  function anyPick(exclude: Set<number>): ScoredTitle | null {
+    return activePool.find((s) => !exclude.has(s.tmdbTitle.id)) ?? null
   }
 
   const usedIds = new Set<number>()
 
-  // ── Safe: highest score, must meet floor ─────────────────────────────────
-  const safePicked =
-    tryPick((s) => s.result.score >= QUALITY_FLOOR, usedIds) ??
-    anyPick(usedIds) ??
-    { item: pool[0], platformFallback: selectedPlatforms.length > 0 }
-  if (safePicked.item) usedIds.add(safePicked.item.tmdbTitle.id)
+  // ── Safe: highest score >= 65 ─────────────────────────────────────────────
+  const safePick = tryPick((s) => s.result.score >= SAFE_FLOOR, usedIds)
+  if (!safePick) throw new Error('NOT_ENOUGH_MATCHES')
+  usedIds.add(safePick.tmdbTitle.id)
 
-  const safeScore    = safePicked.item?.result.score ?? 0
-  const stretchFloor = Math.max(QUALITY_FLOOR, Math.round(safeScore * 0.7))
-  const hiddenFloor  = Math.max(QUALITY_FLOOR, Math.round(safeScore * 0.6))
-
-  // ── Stretch: >= 70% of safe score; prefer genre variety ──────────────────
-  const stretchPicked =
-    tryPick((s) => s.result.score >= stretchFloor && s.result.breakdown.tasteMatch < 0.5, usedIds) ??
-    tryPick((s) => s.result.score >= stretchFloor, usedIds) ??
+  // ── Stretch: >= 60, prefer genre variety ─────────────────────────────────
+  const stretchPick =
+    tryPick((s) => s.result.score >= STRETCH_FLOOR && s.result.breakdown.tasteMatch < 0.5, usedIds) ??
+    tryPick((s) => s.result.score >= STRETCH_FLOOR, usedIds) ??
     anyPick(usedIds) ??
-    safePicked
-  if (stretchPicked.item && stretchPicked.item.tmdbTitle.id !== safePicked.item?.tmdbTitle.id) {
-    usedIds.add(stretchPicked.item.tmdbTitle.id)
-  }
+    safePick
+  if (stretchPick.tmdbTitle.id !== safePick.tmdbTitle.id) usedIds.add(stretchPick.tmdbTitle.id)
 
-  // ── Hidden gem: >= 60% of safe score; prefer lower popularity ────────────
-  const hiddenPicked =
-    tryPick((s) => s.result.score >= hiddenFloor && s.tmdbTitle.vote_count < 5000, usedIds) ??
-    tryPick((s) => s.result.score >= hiddenFloor, usedIds) ??
+  // ── Hidden gem: >= 55, prefer lower popularity ────────────────────────────
+  const hiddenPick =
+    tryPick((s) => s.result.score >= HIDDEN_FLOOR && s.tmdbTitle.vote_count < 5000, usedIds) ??
+    tryPick((s) => s.result.score >= HIDDEN_FLOOR, usedIds) ??
     anyPick(usedIds) ??
-    stretchPicked
+    stretchPick
 
   function displayPlatforms(candidate: Candidate): string[] {
     if (selectedPlatforms.length === 0) return []
     return candidate.platforms.filter((p) => selectedPlatforms.includes(p))
   }
-
-  const safePick    = safePicked.item    ?? pool[0]
-  const stretchPick = stretchPicked.item ?? pool[1] ?? safePick
-  const hiddenPick  = hiddenPicked.item  ?? pool[2] ?? stretchPick
 
   return {
     safe: {
@@ -513,21 +420,21 @@ export async function getRecommendations({
       score:            safePick.result.score,
       reason:           makeReason('safe', safePick.tmdbTitle, dominantGenres),
       platforms:        displayPlatforms(safePick.candidate),
-      platformFallback: safePicked.platformFallback,
+      platformFallback: false,
     },
     stretch: {
       title:            stretchPick.tmdbTitle,
       score:            stretchPick.result.score,
       reason:           makeReason('stretch', stretchPick.tmdbTitle, dominantGenres),
       platforms:        displayPlatforms(stretchPick.candidate),
-      platformFallback: stretchPicked.platformFallback,
+      platformFallback: false,
     },
     hidden: {
       title:            hiddenPick.tmdbTitle,
       score:            hiddenPick.result.score,
       reason:           makeReason('hidden', hiddenPick.tmdbTitle, dominantGenres),
       platforms:        displayPlatforms(hiddenPick.candidate),
-      platformFallback: hiddenPicked.platformFallback,
+      platformFallback: false,
     },
   }
 }

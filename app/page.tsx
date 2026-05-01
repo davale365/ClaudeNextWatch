@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import TitleCard from '@/components/TitleCard'
 import WatchEntry from '@/components/WatchEntry'
-import { saveWatchHistory } from '@/services/interactions'
+import { saveWatchHistory, saveInteraction } from '@/services/interactions'
 import type { TMDbTitle } from '@/services/tmdb'
 import type { WatchInteraction } from '@/services/interactions'
 import type { Recommendations } from '@/services/recommendation'
@@ -75,20 +75,24 @@ export default function HomePage() {
   const [recommendations, setRecommendations] = useState<Recommendations | null>(null)
   const [recLoading, setRecLoading] = useState(false)
   const [recError, setRecError] = useState<string | null>(null)
+  const [notEnoughMatches, setNotEnoughMatches] = useState(false)
   const [excludedIds, setExcludedIds] = useState<number[]>([])
   const [refreshing, setRefreshing] = useState<'safe' | 'stretch' | 'hidden' | null>(null)
+  const [searchSuggestion, setSearchSuggestion] = useState<string | null>(null)
 
   // ─── Search ────────────────────────────────────────────────────────────────
 
   const runSearch = useCallback(async (q: string) => {
-    if (!q.trim()) { setResults([]); setNoMatch(false); return }
+    if (!q.trim()) { setResults([]); setNoMatch(false); setSearchSuggestion(null); return }
     setSearching(true)
     setNoMatch(false)
+    setSearchSuggestion(null)
     try {
       const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`)
       const data = await res.json()
       setResults(data.results ?? [])
       setNoMatch(data.noMatch ?? false)
+      setSearchSuggestion(data.suggestion ?? null)
     } catch {
       setResults([])
     } finally {
@@ -146,6 +150,7 @@ export default function HomePage() {
       setStep('results')
       setRecLoading(true)
       setRecError(null)
+      setNotEnoughMatches(false)
       try {
         const res = await fetch('/api/recommendations', {
           method: 'POST',
@@ -160,6 +165,7 @@ export default function HomePage() {
         })
         if (!res.ok) throw new Error(`Server error ${res.status}`)
         const data = await res.json()
+        if (data.notEnoughMatches) { setNotEnoughMatches(true); return }
         setRecommendations(data)
         setExcludedIds([data.safe.title.id, data.stretch.title.id, data.hidden.title.id])
       } catch (err) {
@@ -174,15 +180,16 @@ export default function HomePage() {
     }
   }
 
-  // ─── Already seen ─────────────────────────────────────────────────────────────
+  // ─── Card refresh (already seen / not for me) ──────────────────────────────
 
-  async function handleAlreadySeen(pick: 'safe' | 'stretch' | 'hidden') {
+  async function handleCardRefresh(
+    pick: 'safe' | 'stretch' | 'hidden',
+    interaction: 'watched_normally' | 'not_for_me'
+  ) {
     if (!recommendations) return
-    const seen = recommendations[pick].title
+    const title = recommendations[pick].title
 
-    // Fire-and-forget: persist interaction so it's excluded in future sessions
-    saveWatchHistory([{ title: seen, interaction: 'watched_normally' }]).catch(() => {})
-
+    saveInteraction(title, interaction).catch(() => {})
     setRefreshing(pick)
     try {
       const res = await fetch('/api/recommendations', {
@@ -199,6 +206,7 @@ export default function HomePage() {
       })
       if (!res.ok) throw new Error(`Server error ${res.status}`)
       const newRecs = await res.json()
+      if (newRecs.notEnoughMatches) return
       const newPick = newRecs[pick]
       setRecommendations((prev) => prev ? { ...prev, [pick]: newPick } : newRecs)
       setExcludedIds((prev) => [...prev, newPick.title.id])
@@ -207,6 +215,10 @@ export default function HomePage() {
     } finally {
       setRefreshing(null)
     }
+  }
+
+  function handleInterested(title: TMDbTitle) {
+    saveInteraction(title, 'liked').catch(() => {})
   }
 
   // ─── Landing ─────────────────────────────────────────────────────────────────
@@ -358,7 +370,21 @@ export default function HomePage() {
               )}
 
               {!searching && noMatch && (
-                <p className="text-sm text-gray-400">No exact match. Try a different spelling.</p>
+                <p className="text-sm text-gray-400">
+                  No exact match.{' '}
+                  {searchSuggestion ? (
+                    <>Did you mean{' '}
+                      <button
+                        className="text-blue-600 underline"
+                        onClick={() => setQuery(searchSuggestion)}
+                      >
+                        {searchSuggestion}
+                      </button>?
+                    </>
+                  ) : (
+                    'Try a different spelling.'
+                  )}
+                </p>
               )}
 
               {entries.length === 0 && !query && (
@@ -414,36 +440,21 @@ export default function HomePage() {
           </div>
         )}
 
-        {recError && !recLoading && (
+        {notEnoughMatches && !recLoading && (
+          <div className="text-center py-12 space-y-3">
+            <p className="text-sm text-gray-600 leading-relaxed">
+              Not enough strong matches yet. Add more watched titles to improve results.
+            </p>
+            <Button variant="outline" size="sm" onClick={() => setStep('watches')}>
+              Add more titles
+            </Button>
+          </div>
+        )}
+
+        {recError && !recLoading && !notEnoughMatches && (
           <div className="text-center py-12 space-y-4">
             <p className="text-sm text-red-500">{recError}</p>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={async () => {
-                setRecLoading(true)
-                setRecError(null)
-                try {
-                  const res = await fetch('/api/recommendations', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                      interactions: entries.map((e) => ({
-                        title: { tmdb_id: e.title.id, genres: e.title.genres, type: e.title.type },
-                        interaction: e.interaction,
-                      })),
-                      selectedPlatforms: platforms,
-                    }),
-                  })
-                  if (!res.ok) throw new Error(`Server error ${res.status}`)
-                  setRecommendations(await res.json())
-                } catch (err) {
-                  setRecError(err instanceof Error ? err.message : 'Could not load recommendations.')
-                } finally {
-                  setRecLoading(false)
-                }
-              }}
-            >
+            <Button variant="outline" size="sm" onClick={() => setStep('watches')}>
               Try again
             </Button>
           </div>
@@ -451,6 +462,9 @@ export default function HomePage() {
 
         {recommendations && !recLoading && (
           <div className="space-y-4">
+            <p className="text-xs text-gray-400">
+              Availability currently based on UK streaming platforms.
+            </p>
             {refreshing === 'safe' ? (
               <CardSpinner />
             ) : (
@@ -461,7 +475,9 @@ export default function HomePage() {
                 reason={recommendations.safe.reason}
                 platforms={recommendations.safe.platforms}
                 platformFallback={recommendations.safe.platformFallback}
-                onAlreadySeen={() => handleAlreadySeen('safe')}
+                onAlreadySeen={() => handleCardRefresh('safe', 'watched_normally')}
+                onNotForMe={() => handleCardRefresh('safe', 'not_for_me')}
+                onInterested={() => handleInterested(recommendations.safe.title)}
               />
             )}
             {refreshing === 'stretch' ? (
@@ -474,7 +490,9 @@ export default function HomePage() {
                 reason={recommendations.stretch.reason}
                 platforms={recommendations.stretch.platforms}
                 platformFallback={recommendations.stretch.platformFallback}
-                onAlreadySeen={() => handleAlreadySeen('stretch')}
+                onAlreadySeen={() => handleCardRefresh('stretch', 'watched_normally')}
+                onNotForMe={() => handleCardRefresh('stretch', 'not_for_me')}
+                onInterested={() => handleInterested(recommendations.stretch.title)}
               />
             )}
             {refreshing === 'hidden' ? (
@@ -487,7 +505,9 @@ export default function HomePage() {
                 reason={recommendations.hidden.reason}
                 platforms={recommendations.hidden.platforms}
                 platformFallback={recommendations.hidden.platformFallback}
-                onAlreadySeen={() => handleAlreadySeen('hidden')}
+                onAlreadySeen={() => handleCardRefresh('hidden', 'watched_normally')}
+                onNotForMe={() => handleCardRefresh('hidden', 'not_for_me')}
+                onInterested={() => handleInterested(recommendations.hidden.title)}
               />
             )}
           </div>
@@ -505,6 +525,7 @@ export default function HomePage() {
             setSaveError(null)
             setRecommendations(null)
             setRecError(null)
+            setNotEnoughMatches(false)
             setExcludedIds([])
             setRefreshing(null)
           }}

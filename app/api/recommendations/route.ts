@@ -21,6 +21,9 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(recommendations)
   } catch (err) {
+    if (err instanceof Error && err.message === 'NOT_ENOUGH_MATCHES') {
+      return NextResponse.json({ notEnoughMatches: true })
+    }
     const message = err instanceof Error ? err.message : 'Failed to fetch recommendations'
     return NextResponse.json({ error: message }, { status: 500 })
   }
